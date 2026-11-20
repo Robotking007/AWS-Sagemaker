@@ -1,0 +1,61 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: IAM-authenticated prediction API for the Assignment 9 SageMaker endpoint
+Parameters:
+  EndpointName:
+    Type: String
+    Default: breast-cancer-rf-endpoint
+Resources:
+  PredictionApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: prod
+      Auth:
+        DefaultAuthorizer: AWS_IAM
+      MethodSettings:
+        - ResourcePath: '/*'
+          HttpMethod: '*'
+          ThrottlingBurstLimit: 10
+          ThrottlingRateLimit: 5
+  PredictionFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: api/
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.12
+      Timeout: 28
+      Environment:
+        Variables:
+          ENDPOINT_NAME: !Ref EndpointName
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: sagemaker:InvokeEndpoint
+              Resource: !Sub arn:${AWS::Partition}:sagemaker:${AWS::Region}:${AWS::AccountId}:endpoint/${EndpointName}
+      Events:
+        Predict:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PredictionApi
+            Path: /predict
+            Method: post
+  EndpointErrors:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: SageMaker endpoint returned a 5XX error
+      Namespace: AWS/SageMaker
+      MetricName: Invocation5XXErrors
+      Dimensions:
+        - Name: EndpointName
+          Value: !Ref EndpointName
+        - Name: VariantName
+          Value: AllTraffic
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+Outputs:
+  PredictUrl:
+    Value: !Sub https://${PredictionApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/prod/predict
